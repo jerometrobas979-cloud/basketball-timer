@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111827">
+<title>Basketball Decimal Timer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    padding: clamp(10px, 2vw, 24px); background: #080d18; color: #fff;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  .clock {
+    width: min(100%, 1040px); padding: clamp(20px, 3vw, 36px);
+    border-radius: 24px; background: #111827; text-align: center;
+    box-shadow: 0 18px 55px #0008; border: 1px solid #293449;
+    display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, .85fr);
+    grid-template-areas:
+      "brand controls"
+      "timer controls"
+      "status controls"
+      "footer footer";
+    align-items: center; column-gap: clamp(22px, 4vw, 52px);
+  }
+  .brand { grid-area: brand; }
+  .timer-area { grid-area: timer; min-width: 0; }
+  .status-area { grid-area: status; }
+  .controls-area { grid-area: controls; width: 100%; }
+  .foot { grid-area: footer; }
+  @media (max-width: 680px), (orientation: portrait) {
+    .clock {
+      max-width: 520px; grid-template-columns: 1fr;
+      grid-template-areas: "brand" "timer" "status" "controls" "footer";
+      row-gap: 0;
+    }
+  }
+  .ball { font-size: 42px; margin-bottom: 8px; }
+  .heading { color: #fbbf24; font-weight: 800; letter-spacing: .16em; font-size: 14px; }
+  #display {
+    margin: 18px 0 8px; font: 800 clamp(58px, 9vw, 112px)/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: -0.07em; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #status { color: #9ca3af; font-size: 12px; letter-spacing: .16em; min-height: 18px; }
+  .buttons { display: flex; gap: 10px; margin-top: 8px; }
+  button {
+    border: 0; border-radius: 13px; padding: 15px 12px; font-size: 15px;
+    font-weight: 800; cursor: pointer; flex: 1; touch-action: manipulation;
+  }
+  button:active { transform: scale(.98); }
+  #start { background: #fbbf24; color: #111827; }
+  #pause, #reset { background: #374151; color: white; }
+  #reset { width: 100%; margin-top: 10px; }
+  .meter { background: #1f2937; padding: 14px; border-radius: 12px; margin-top: 18px; text-align: left; }
+  .meter-label { display: flex; justify-content: space-between; color: #9ca3af; font-size: 11px; margin-bottom: 9px; }
+  .track { height: 8px; background: #374151; border-radius: 20px; overflow: hidden; }
+  #bar { height: 100%; width: 100%; background: #fbbf24; transition: width .08s linear; }
+  .foot { margin-top: 22px; color: #9ca3af; font-size: 11px; letter-spacing: .1em; }
+  @media (orientation: landscape) and (max-height: 520px) {
+    body { padding: 8px 16px; }
+    .clock { padding: 12px 24px; }
+    .ball { font-size: 28px; margin-bottom: 2px; }
+    #display { margin: 6px 0 2px; font-size: clamp(48px, 13vh, 76px); }
+    .foot { margin-top: 10px; font-size: 9px; }
+    .meter { margin-top: 10px; padding: 10px; }
+    button { padding: 11px 10px; }
+  }
+
+  /* Hide common Netlify branding badges if the host injects them into the page. */
+  #netlify-badge, .netlify-badge, [data-netlify-badge],
+  iframe[src*="netlify-badge"], iframe[title*="Netlify"] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+</style>
+</head>
+<body>
+<main class="clock">
+  <div class="brand">
+    <div class="ball">🏀</div>
+    <div class="heading">BASKETBALL GAME CLOCK</div>
+  </div>
+  <div class="timer-area">
+    <div id="display" role="timer" aria-live="off">12:00.0</div>
+  </div>
+  <div class="status-area">
+    <div id="status" aria-live="polite">READY TO PLAY</div>
+  </div>
+  <div class="controls-area">
+    <div class="buttons">
+      <button id="start" type="button">▶ START</button>
+      <button id="pause" type="button">Ⅱ PAUSE</button>
+    </div>
+    <button id="reset" type="button">↻ RESET TO 12:00.0</button>
+    <section class="meter">
+      <div class="meter-label"><span>GAME TIME</span><span id="percent">100.0%</span></div>
+      <div class="track"><div id="bar"></div></div>
+    </section>
+  </div>
+  <div class="foot">12 MINUTES · 0.1 SECOND PRECISION · OFFLINE</div>
+</main>
+<script>
+(() => {
+  "use strict";
+  const INITIAL_TENTHS = 7200; // 12:00.0
+  let remainingMs = INITIAL_TENTHS * 100;
+  let running = false;
+  let deadline = 0;
+  let timerId = null;
+
+  const display = document.getElementById("display");
+  const status = document.getElementById("status");
+  const start = document.getElementById("start");
+  const pause = document.getElementById("pause");
+  const reset = document.getElementById("reset");
+  const bar = document.getElementById("bar");
+  const percent = document.getElementById("percent");
+
+  function render() {
+    const tenths = Math.max(0, Math.ceil(remainingMs / 100));
+    const minutes = Math.floor(tenths / 600);
+    const seconds = Math.floor((tenths % 600) / 10);
+    const decimal = tenths % 10;
+    display.textContent =
+      String(minutes).padStart(2, "0") + ":" +
+      String(seconds).padStart(2, "0") + "." + decimal;
+    const pct = Math.max(0, remainingMs / (INITIAL_TENTHS * 100) * 100);
+    bar.style.width = pct + "%";
+    percent.textContent = pct.toFixed(1) + "%";
+  }
+
+  function stop() {
+    running = false;
+    if (timerId !== null) clearInterval(timerId);
+    timerId = null;
+  }
+
+  function tick() {
+    remainingMs = Math.max(0, deadline - performance.now());
+    render();
+    if (remainingMs <= 0) {
+      stop();
+      display.textContent = "00:00.0";
+      status.textContent = "TIME EXPIRED";
+    }
+  }
+
+  start.addEventListener("click", () => {
+    if (running || remainingMs <= 0) return;
+    running = true;
+    status.textContent = "GAME IN PROGRESS";
+    deadline = performance.now() + remainingMs;
+    timerId = setInterval(tick, 25);
+  });
+
+  pause.addEventListener("click", () => {
+    if (!running) return;
+    remainingMs = Math.max(0, deadline - performance.now());
+    stop();
+    render();
+    status.textContent = remainingMs <= 0 ? "TIME EXPIRED" : "GAME PAUSED";
+  });
+
+  reset.addEventListener("click", () => {
+    stop();
+    remainingMs = INITIAL_TENTHS * 100;
+    render();
+    status.textContent = "READY TO PLAY";
+  });
+
+  render();
+})();
+</script>
+
+<script>
+(() => {
+  const removeNetlifyBadge = () => {
+    document.querySelectorAll("body *").forEach((el) => {
+      if (el.children.length > 3) return;
+      const text = (el.textContent || "").trim();
+      if (/^Powered by Netlify$/i.test(text)) {
+        const style = getComputedStyle(el);
+        if (style.position === "fixed" || style.position === "absolute") {
+          el.remove();
+        }
+      }
+    });
+  };
+  removeNetlifyBadge();
+  new MutationObserver(removeNetlifyBadge).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+})();
+</script>
+
+</body>
+</html>
